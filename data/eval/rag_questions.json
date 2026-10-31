@@ -1,0 +1,13 @@
+[
+  {"question": "How many hydraulic pumps were ordered?", "expect_any": ["2"], "source": "purchase_order.pdf"},
+  {"question": "How many hydraulic pumps were invoiced?", "expect_any": ["3"], "source": "invoice_scan.png"},
+  {"question": "What is the total amount of the purchase order?", "expect_any": ["3,600", "3600"], "source": "purchase_order.pdf"},
+  {"question": "What is the total amount due on the invoice?", "expect_any": ["5,100", "5100"], "source": "invoice_scan.png"},
+  {"question": "When is payment for INV-2026-0932 due?", "expect_any": ["11/17/2026", "2026-11-17", "November 17"], "source": "invoice_scan.png"},
+  {"question": "Which company is the buyer?", "expect_any": ["Atlas Manufacturing"], "source": "purchase_order.pdf"},
+  {"question": "When were the goods shipped?", "expect_any": ["October 17, 2026", "2026-10-17"], "source": "invoice_scan.png"},
+  {"question": "What are the payment terms of PO-2026-0147?", "expect_any": ["Net 30", "30 days"], "source": "purchase_order.pdf"},
+  {"question": "What is the unit price of the safety gloves?", "expect_any": ["15.00", "$15"], "source": "purchase_order.pdf"},
+  {"question": "What is the supplier's bank account number?", "expect_any": [], "source": null},
+  {"question": "Who signed the invoice on behalf of the supplier?", "expect_any": [], "source": null}
+]

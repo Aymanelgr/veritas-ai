@@ -1,0 +1,21 @@
+PURCHASE ORDER
+
+PO Number: PO-2026-0147
+Date: 2026-10-01
+Currency: USD
+Buyer: Atlas Manufacturing SARL, procurement@atlas-mfg.example
+Supplier: Nordline Industrial Supplies, sales@nordline.example
+
+Please supply the following items. Delivery is required by October 20, 2026.
+
+Item                     Qty   Unit Price   Total
+Steel bolts M8           500   $0.40        $200.00
+Hydraulic pump HP-200      2   $1,250.00    $2,500.00
+Safety gloves (box)       20   $15.00       $300.00
+
+Subtotal: $3,000.00
+Tax (20%): $600.00
+Total: $3,600.00
+
+Payment terms: Net 30 days from invoice date.
+Any change in quantity or price must be approved in writing by the buyer before shipment.

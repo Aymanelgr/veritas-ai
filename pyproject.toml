@@ -1,0 +1,10 @@
+[project]
+name = "veritas-ai"
+version = "0.1.0"
+description = "Intelligent document processing, verification and automation platform"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+# Lets tests import phase1_nlp / phase2_documents from the project root.
+pythonpath = ["."]
+testpaths = ["tests"]

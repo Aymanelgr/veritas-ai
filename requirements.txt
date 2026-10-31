@@ -1,0 +1,40 @@
+# PyTorch with CUDA (RTX 3080) is installed separately first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# Phase 1 - NLP
+nltk
+textstat
+regex
+
+# Phase 2 - OCR & document reading
+pymupdf
+python-docx
+pillow
+paddlepaddle
+paddleocr
+
+# Phase 3 - Structured extraction
+spacy
+pydantic
+ollama
+
+# Phase 5-6 - Verification, embeddings, RAG
+transformers
+sentence-transformers
+pgvector
+
+# Phase 7 - Backend
+fastapi
+uvicorn[standard]
+python-multipart
+sqlalchemy
+psycopg[binary]
+redis
+rq
+python-dotenv
+httpx
+
+# Phase 10 - Testing & evaluation
+pytest
+scikit-learn
+alembic

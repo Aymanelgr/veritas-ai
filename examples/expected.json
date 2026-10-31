@@ -1,0 +1,141 @@
+[
+  {
+    "folder": "01_perfect_match",
+    "invoice_file": "invoice_scan.png",
+    "linked_po": "PO-2026-1101",
+    "problems": []
+  },
+  {
+    "folder": "02_quantity_mismatch",
+    "invoice_file": "invoice_scanned.pdf",
+    "linked_po": "PO-2026-1102",
+    "problems": [
+      [
+        "quantity_match",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "03_approved_change",
+    "invoice_file": "invoice.txt",
+    "linked_po": "PO-2026-1103",
+    "problems": [
+      [
+        "quantity_match",
+        "warning"
+      ]
+    ]
+  },
+  {
+    "folder": "04_price_increase",
+    "invoice_file": "invoice_scan.png",
+    "linked_po": "PO-2026-1104",
+    "problems": [
+      [
+        "unit_price_match",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "05_unexpected_item",
+    "invoice_file": "invoice.pdf",
+    "linked_po": "PO-2026-1105",
+    "problems": [
+      [
+        "unexpected_item",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "06_arithmetic_error",
+    "invoice_file": "invoice_scan.png",
+    "linked_po": "PO-2026-1106",
+    "problems": [
+      [
+        "total_arithmetic",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "07_no_po_reference",
+    "invoice_file": "invoice_scan.png",
+    "linked_po": "PO-2026-1107",
+    "problems": []
+  },
+  {
+    "folder": "08_orphan_invoice",
+    "invoice_file": "invoice.docx",
+    "linked_po": null,
+    "problems": [
+      [
+        "matching_order",
+        "warning"
+      ]
+    ]
+  },
+  {
+    "folder": "09_partial_invoice",
+    "invoice_file": "invoice_scanned.pdf",
+    "linked_po": "PO-2026-1109",
+    "problems": [
+      [
+        "item_not_invoiced",
+        "info"
+      ]
+    ]
+  },
+  {
+    "folder": "10_late_delivery",
+    "invoice_file": "invoice_scan.png",
+    "linked_po": "PO-2026-1110",
+    "problems": [
+      [
+        "delivery_deadline",
+        "warning"
+      ]
+    ]
+  },
+  {
+    "folder": "11_currency_not_stated",
+    "invoice_file": "invoice.pdf",
+    "linked_po": "PO-2026-1111",
+    "problems": [
+      [
+        "currency_match",
+        "warning"
+      ]
+    ]
+  },
+  {
+    "folder": "12_currency_mismatch",
+    "invoice_file": "invoice.pdf",
+    "linked_po": "PO-2026-1112",
+    "problems": [
+      [
+        "currency_match",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "13_french_dirhams",
+    "invoice_file": "facture_scan.png",
+    "linked_po": "BC-2026-0413",
+    "problems": [
+      [
+        "quantity_match",
+        "critical"
+      ]
+    ]
+  },
+  {
+    "folder": "14_arabic",
+    "invoice_file": "invoice_arabic.pdf",
+    "linked_po": "PO-2026-1114",
+    "problems": []
+  }
+]

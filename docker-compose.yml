@@ -1,0 +1,85 @@
+# Development (infrastructure only; run the API, worker and frontend on your PC):
+#   docker compose up -d
+# Everything in containers (adds api, worker, frontend at http://localhost:8080):
+#   docker compose --profile app up -d --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      GENERIC_TIMEZONE: ${TIMEZONE:-UTC}
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # ---- Application (profile "app") ----
+  api:
+    profiles: ["app"]
+    build: .
+    environment: &app-env
+      # Inside Docker, services reach each other by service name, not localhost.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      # Ollama keeps running on the host, where it can use the GPU directly.
+      OLLAMA_URL: http://host.docker.internal:11434
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook/veritas-review
+      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN}
+      DASHBOARD_URL: http://localhost:8080
+    volumes:
+      - uploads:/app/storage
+      - models:/models
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "backend.worker"]
+    environment: *app-env
+    volumes:
+      - uploads:/app/storage  # the worker must see the files the API saved
+      - models:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  frontend:
+    profiles: ["app"]
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on: [api]
+
+volumes:
+  postgres_data:
+  n8n_data:
+  uploads:
+  models:

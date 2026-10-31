@@ -1,0 +1,21 @@
+INVOICE
+
+Invoice Number: INV-2026-0932
+Invoice Date: 2026-10-18
+Currency: USD
+PO Reference: PO-2026-0147
+From: Nordline Industrial Supplies, billing@nordline.example
+Bill To: Atlas Manufacturing SARL
+
+Thank you for your order. The goods listed below were shipped on October 17, 2026.
+
+Item                     Qty   Unit Price   Total
+Steel bolts M8           500   $0.40        $200.00
+Hydraulic pump HP-200      3   $1,250.00    $3,750.00
+Safety gloves (box)       20   $15.00       $300.00
+
+Subtotal: $4,250.00
+Tax (20%): $850.00
+Total Due: $5,100.00
+
+Payment is due by 11/17/2026.

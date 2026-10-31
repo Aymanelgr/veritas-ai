@@ -1,0 +1,76 @@
+{
+  "id": "VeritasReview001",
+  "name": "Veritas - notify reviewer when issues are found",
+  "active": false,
+  "nodes": [
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000001",
+      "name": "Veritas webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "4f3b2a10-7c55-4e0e-9a5d-veritasreview",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "veritas-review",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000002",
+      "name": "Format message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "jsCode": "// The webhook puts the JSON sent by Veritas in `body`.\nconst p = $input.first().json.body;\nconst critical = p.findings.filter(f => f.severity === 'critical').length;\nconst subject = critical ? `${critical} critical issue(s)` : `${p.findings.length} issue(s)`;\nreturn [{ json: {\n  kind: 'review_needed',\n  title: `${subject} to review on ${p.document.number || p.document.filename}`,\n  body: p.findings.map(f => `- [${f.severity.toUpperCase()}] ${f.claim}. ${f.explanation}`).join('\\n'),\n  link: p.dashboard_url,\n}}];"
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000003",
+      "name": "Post to Veritas inbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, -100],
+      "parameters": {
+        "method": "POST",
+        "url": "__VERITAS_API__/api/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Veritas-Token", "value": "__AUTOMATION_TOKEN__" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000004",
+      "name": "Email reviewer (add SMTP credentials, then enable)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 100],
+      "disabled": true,
+      "parameters": {
+        "fromEmail": "veritas@example.com",
+        "toEmail": "reviewer@example.com",
+        "subject": "={{ $json.title }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}\n\nReview it here: {{ $json.link }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Veritas webhook": { "main": [[{ "node": "Format message", "type": "main", "index": 0 }]] },
+    "Format message": {
+      "main": [[
+        { "node": "Post to Veritas inbox", "type": "main", "index": 0 },
+        { "node": "Email reviewer (add SMTP credentials, then enable)", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
