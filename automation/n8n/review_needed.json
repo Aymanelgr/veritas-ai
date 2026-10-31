@@ -8,69 +8,224 @@
       "name": "Veritas webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 0],
-      "webhookId": "4f3b2a10-7c55-4e0e-9a5d-veritasreview",
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "httpMethod": "POST",
         "path": "veritas-review",
         "responseMode": "onReceived",
         "options": {}
-      }
+      },
+      "webhookId": "4f3b2a10-7c55-4e0e-9a5d-veritasreview"
     },
     {
       "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000002",
-      "name": "Format message",
+      "name": "Check token and format",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [240, 0],
+      "position": [
+        240,
+        0
+      ],
       "parameters": {
-        "jsCode": "// The webhook puts the JSON sent by Veritas in `body`.\nconst p = $input.first().json.body;\nconst critical = p.findings.filter(f => f.severity === 'critical').length;\nconst subject = critical ? `${critical} critical issue(s)` : `${p.findings.length} issue(s)`;\nreturn [{ json: {\n  kind: 'review_needed',\n  title: `${subject} to review on ${p.document.number || p.document.filename}`,\n  body: p.findings.map(f => `- [${f.severity.toUpperCase()}] ${f.claim}. ${f.explanation}`).join('\\n'),\n  link: p.dashboard_url,\n}}];"
+        "jsCode": "// Only Veritas knows the token: anything else posting to this webhook is ignored.\nconst req = $input.first().json;\nif ((req.headers || {})['x-veritas-token'] !== '__AUTOMATION_TOKEN__') return [];\nconst p = req.body;\nconst critical = p.findings.filter(f => f.severity === 'critical').length;\nconst subject = p.event === 'test' ? 'Test alert'\n  : critical ? `${critical} critical issue(s)` : `${p.findings.length} issue(s)`;\n// Only a short summary leaves Veritas: no document content or files; the link needs a sign-in.\nreturn [{ json: {\n  kind: p.event === 'test' ? 'test' : 'review_needed',\n  organization_id: p.organization_id,\n  title: `${subject} to review on ${p.document.number || p.document.filename}`,\n  body: p.findings.map(f => `- [${f.severity.toUpperCase()}] ${f.claim}` + (f.impact ? ` (${f.impact} ${f.currency || ''})` : '')).join('\\n'),\n  link: p.dashboard_url,\n  email_mode: p.email_mode, recipients: p.recipients || [], delivery_ids: p.delivery_ids || [],\n}}];"
       }
     },
     {
-      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000003",
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-inbox",
       "name": "Post to Veritas inbox",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [480, -100],
+      "position": [
+        480,
+        -150
+      ],
       "parameters": {
         "method": "POST",
         "url": "__VERITAS_API__/api/notifications",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [{ "name": "X-Veritas-Token", "value": "__AUTOMATION_TOKEN__" }]
+          "parameters": [
+            {
+              "name": "X-Veritas-Token",
+              "value": "__AUTOMATION_TOKEN__"
+            }
+          ]
         },
+        "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify($json) }}"
       }
     },
     {
-      "id": "6c1d6f1e-0a01-4b6a-9b8a-000000000004",
-      "name": "Email reviewer (add SMTP credentials, then enable)",
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-split",
+      "name": "Email only in send mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Veritas decides; n8n delivers. email_mode comes from Veritas settings (off | preview | send).\nreturn $input.all()\n  .map(i => i.json)\n  .filter(m => m.email_mode === 'send' && (m.recipients || []).length)\n  .map(m => ({ json: { ...m, to: m.recipients.join(', ') } }));"
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-email",
+      "name": "Email (add SMTP credentials, then enable)",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [480, 100],
-      "disabled": true,
+      "position": [
+        720,
+        100
+      ],
       "parameters": {
         "fromEmail": "veritas@example.com",
-        "toEmail": "reviewer@example.com",
+        "toEmail": "={{ $json.to }}",
         "subject": "={{ $json.title }}",
         "emailFormat": "text",
-        "text": "={{ $json.body }}\n\nReview it here: {{ $json.link }}",
+        "text": "={{ $json.body }}\n\nReview it in Veritas (sign-in required): {{ $json.link }}",
         "options": {}
+      },
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-result",
+      "name": "Email result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const sent = $('Email only in send mode').all();\nreturn $input.all().map((item, i) => {\n  const out = item.json, ids = sent[i].json.delivery_ids;\n  if (out.error) return { json: { delivery_ids: ids, status: 'failed', error: String(out.error.message || out.error).slice(0, 400) } };\n  if (Array.isArray(out.accepted) && out.accepted.length) return { json: { delivery_ids: ids, status: 'sent' } };\n  return { json: { delivery_ids: ids, status: 'skipped', error: 'The email node is disabled or not configured in n8n: add SMTP credentials and enable it.' } };\n});"
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-preview",
+      "name": "Preview / email off",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Preview mode: report what WOULD have been emailed, without sending anything.\nreturn $input.all()\n  .map(i => i.json)\n  .filter(m => !(m.email_mode === 'send' && (m.recipients || []).length))\n  .map(m => ({ json: {\n    delivery_ids: m.delivery_ids,\n    status: m.email_mode === 'preview' ? 'preview' : 'skipped',\n    error: m.email_mode === 'preview'\n      ? `Preview only, not sent. Would email ${(m.recipients || []).join(', ') || 'nobody (no recipients set)'}: ${m.title}`\n      : (m.email_mode === 'send' ? 'No recipients set' : 'Email is off for this organization'),\n  } }));"
+      }
+    },
+    {
+      "id": "6c1d6f1e-0a01-4b6a-9b8a-report",
+      "name": "Report delivery to Veritas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "__VERITAS_API__/api/automation/deliveries",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Veritas-Token",
+              "value": "__AUTOMATION_TOKEN__"
+            }
+          ]
+        },
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
       }
     }
   ],
   "connections": {
-    "Veritas webhook": { "main": [[{ "node": "Format message", "type": "main", "index": 0 }]] },
-    "Format message": {
-      "main": [[
-        { "node": "Post to Veritas inbox", "type": "main", "index": 0 },
-        { "node": "Email reviewer (add SMTP credentials, then enable)", "type": "main", "index": 0 }
-      ]]
+    "Veritas webhook": {
+      "main": [
+        [
+          {
+            "node": "Check token and format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check token and format": {
+      "main": [
+        [
+          {
+            "node": "Post to Veritas inbox",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email only in send mode",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Preview / email off",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email only in send mode": {
+      "main": [
+        [
+          {
+            "node": "Email (add SMTP credentials, then enable)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email (add SMTP credentials, then enable)": {
+      "main": [
+        [
+          {
+            "node": "Email result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email result": {
+      "main": [
+        [
+          {
+            "node": "Report delivery to Veritas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview / email off": {
+      "main": [
+        [
+          {
+            "node": "Report delivery to Veritas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }

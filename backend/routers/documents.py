@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from typing import BinaryIO
 
 import pymupdf
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from backend import schemas
+from backend import insights, schemas
 from backend.audit import record
 from backend.deps import db, owned_document, require
 from backend.corrections import active_corrections, apply_corrections, get_value
@@ -29,20 +30,48 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "storage" / "upload
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
-def _save_upload(file: UploadFile) -> tuple[Path, str, int]:
+def _save_upload(stream: BinaryIO, name: str) -> tuple[Path, str, int]:
     """Stream the upload to a temporary file, stopping as soon as it exceeds the size limit."""
     digest, size = hashlib.sha256(), 0
     tmp = tempfile.NamedTemporaryFile(delete=False, dir=UPLOAD_DIR, prefix=".incoming-")
     with tmp:
-        while chunk := file.file.read(1024 * 1024):
+        while chunk := stream.read(1024 * 1024):
             size += len(chunk)
             if size > MAX_FILE_BYTES:
                 tmp.close()
                 Path(tmp.name).unlink(missing_ok=True)
-                raise RejectedUpload(f"{file.filename} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB")
+                raise RejectedUpload(f"{name} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB")
             digest.update(chunk)
             tmp.write(chunk)
     return Path(tmp.name), digest.hexdigest(), size
+
+
+def store_file(session: Session, user: User | None, organization_id: int, name: str, stream: BinaryIO,
+               overrides: dict | None = None, source: dict | None = None) -> Document:
+    """Validate and store one file as a new document (not yet processed). Raises RejectedUpload.
+
+    Used by uploads and by the email intake, so both get the same content checks and limits.
+    """
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    name = Path(name or "upload").name
+    tmp, sha256, size = _save_upload(stream, name)
+    try:
+        checked = check_file(tmp, Path(name).suffix)
+    except RejectedUpload:
+        tmp.unlink(missing_ok=True)
+        raise
+    # A random prefix stops two uploads with the same name from overwriting each other.
+    path = UPLOAD_DIR / f"{uuid.uuid4().hex[:8]}_{name}"
+    shutil.move(tmp, path)
+    doc = Document(organization_id=organization_id, uploaded_by_id=user.id if user else None, filename=name,
+                   file_path=str(path), sha256=sha256, size_bytes=size, content_type=checked.content_type,
+                   overrides=overrides or {})
+    session.add(doc)
+    session.flush()
+    record(session, user, "document_uploaded", "document", doc.id, organization_id=organization_id,
+           filename=name, sha256=sha256, **(source or {}))
+    session.commit()
+    return doc
 
 
 def _overrides(doc_type: str | None, language: str | None, currency: str | None,
@@ -60,30 +89,13 @@ def upload(files: list[UploadFile], doc_type: str | None = Form(None), language:
     overrides = _overrides(doc_type, language, currency, day_first)
     if len(files) > MAX_FILES_PER_UPLOAD:
         raise HTTPException(413, f"Upload at most {MAX_FILES_PER_UPLOAD} files at a time")
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     created = []
     for file in files:
         name = Path(file.filename or "upload").name
         try:
-            tmp, sha256, size = _save_upload(file)
-            try:
-                checked = check_file(tmp, Path(name).suffix)
-            except RejectedUpload:
-                tmp.unlink(missing_ok=True)
-                raise
+            created.append(store_file(session, user, user.organization_id, name, file.file, overrides))
         except RejectedUpload as error:
             raise HTTPException(415, f"{name}: {error}") from None
-        # A random prefix stops two uploads with the same name from overwriting each other.
-        path = UPLOAD_DIR / f"{uuid.uuid4().hex[:8]}_{name}"
-        shutil.move(tmp, path)
-        doc = Document(organization_id=user.organization_id, uploaded_by_id=user.id, filename=name,
-                       file_path=str(path), sha256=sha256, size_bytes=size, content_type=checked.content_type,
-                       overrides=overrides)
-        session.add(doc)
-        session.flush()
-        record(session, user, "document_uploaded", "document", doc.id, filename=name, sha256=sha256)
-        session.commit()
-        created.append(doc)
     for doc in created:
         enqueue_processing(doc.id)  # 202 Accepted: processing continues in the background
     for doc in created:
@@ -163,11 +175,14 @@ def get_document(document_id: int, user: User = Depends(require("viewer")),
     runs = session.scalars(select(ProcessingRun).where(ProcessingRun.document_id == doc.id)
                            .order_by(ProcessingRun.id.desc()).limit(5)).all()
     base = schemas.DocumentOut.model_validate(doc).model_dump()
+    corrections = list(session.scalars(select(Correction).where(Correction.document_id == doc.id)
+                                       .order_by(Correction.id)))
+    effective = apply_corrections(Extraction.model_validate(doc.extraction).data,
+                                  [c for c in corrections if c.active]).model_dump(mode="json") if doc.extraction else None
     return schemas.DocumentDetail(
-        **base, text=doc.text, pages=doc.pages, extraction=doc.extraction, links=links,
+        **base, text=doc.text, pages=doc.pages, extraction=doc.extraction, effective=effective, links=links,
         findings=[schemas.FindingOut.model_validate(f) for f in findings], comparison=comparison,
-        corrections=[schemas.CorrectionOut.model_validate(c) for c in session.scalars(
-            select(Correction).where(Correction.document_id == doc.id).order_by(Correction.id))],
+        corrections=[schemas.CorrectionOut.model_validate(c) for c in corrections],
         runs=[schemas.ProcessingRunOut.model_validate(r) for r in runs],
     )
 
@@ -274,6 +289,34 @@ def delete_document(document_id: int, user: User = Depends(require("admin")),
                     session: Session = Depends(db)) -> None:
     doc = owned_document(session, user, document_id)
     record(session, user, "document_deleted", "document", doc.id, filename=doc.filename, sha256=doc.sha256)
+    from backend.routers.assistant import forget_document
+
+    forget_document(session, doc.organization_id, doc.id)
     Path(doc.file_path).unlink(missing_ok=True)
     session.delete(doc)
     session.commit()
+
+
+@router.get("/{document_id}/timeline")
+def get_timeline(document_id: int, user: User = Depends(require("viewer")),
+                 session: Session = Depends(db)) -> list[dict]:
+    """Orders, invoices, matches, findings, corrections and decisions of this transaction, in time order."""
+    return insights.timeline(session, owned_document(session, user, document_id))
+
+
+@router.post("/{document_id}/simulate")
+def simulate(document_id: int, body: schemas.SimulateIn, user: User = Depends(require("viewer")),
+             session: Session = Depends(db)) -> dict:
+    """Which findings would change if these values were different. Nothing is saved."""
+    doc = owned_document(session, user, document_id)
+    if doc.doc_type != "invoice" or not doc.extraction:
+        raise HTTPException(422, "Simulations run on a processed invoice")
+    for change in body.changes:
+        owned_document(session, user, change.document_id)
+    try:
+        result = insights.simulate(session, doc, [c.model_dump() for c in body.changes])
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError) as error:
+        raise HTTPException(422, f"Cannot simulate this change: {error}") from None
+    finally:
+        session.rollback()  # belt and braces: a simulation never writes
+    return result

@@ -180,9 +180,26 @@ def check_citations(answer: str, sources: list[Source]) -> list[SentenceCheck]:
     return checks
 
 
+FOLLOW_UP = re.compile(r"^(and|what about|how about|also|then|et|aussi|alors|و)\b|\b(it|its|they|them|their|that|"
+                       r"this|those|these|same|ça|cela|celle|celui|il|elle|ils|elles|leur)\b", re.IGNORECASE)
+
+
+def search_query(question: str, history: list[tuple[str, str]] | None) -> str:
+    """A follow-up such as "and the bolts?" is searched together with the previous question."""
+    if history and (len(question.split()) <= 6 or FOLLOW_UP.search(question)):
+        return f"{history[-1][0]} {question}"
+    return question
+
+
 def ask(session: Session, question: str, document_ids: list[int] | None = None,
-        organization_id: int | None = None) -> RagAnswer:
-    chunks = search(session, question, document_ids=document_ids, organization_id=organization_id)
+        organization_id: int | None = None, history: list[tuple[str, str]] | None = None) -> RagAnswer:
+    """history: earlier (question, answer) pairs of the conversation, oldest first.
+
+    They help interpret a follow-up question but are never a source: every answer must still be
+    cited from passages retrieved now, and those citations are checked as before.
+    """
+    chunks = search(session, search_query(question, history), document_ids=document_ids,
+                    organization_id=organization_id)
     sources = [Source(n=i, document_id=c.document_id, filename=c.document.filename,
                       label=document_label(c.document), page=c.page, text=c.text)
                for i, c in enumerate(chunks, start=1)]
@@ -190,7 +207,12 @@ def ask(session: Session, question: str, document_ids: list[int] | None = None,
         return RagAnswer(question=question, answer=NOT_FOUND, sources=[], checks=[], citation_accuracy=None)
 
     context = "\n\n".join(f"[{s.n}] ({s.label}, {s.filename}, page {s.page})\n{s.text}" for s in sources)
-    answer = llm.chat(SYSTEM_PROMPT, f"Sources:\n{context}\n\nQuestion: {question}").strip()
+    earlier = ""
+    if history:
+        turns = "\n".join(f"Q: {q}\nA: {CITATION.sub('', a)[:400]}" for q, a in history[-3:])
+        earlier = ("Earlier in this conversation (only to understand the question; NOT a source, do not cite):\n"
+                   f"{turns}\n\n")
+    answer = llm.chat(SYSTEM_PROMPT, f"{earlier}Sources:\n{context}\n\nQuestion: {question}").strip()
     checks = check_citations(answer, sources)
     accuracy = sum(c.verdict == "supported" for c in checks) / len(checks) if checks else None
     return RagAnswer(question=question, answer=answer, sources=sources, checks=checks,

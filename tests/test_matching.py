@@ -11,11 +11,11 @@ SAMPLES = Path(__file__).resolve().parent.parent / "data" / "samples"
 
 
 def doc(doc_type, number, buyer="Atlas Manufacturing SARL", supplier="Nordline Industrial Supplies",
-        items=("Hydraulic pump HP-200", "Steel bolts M8"), issued=date(2026, 10, 1), refs=()):
+        items=("Hydraulic pump HP-200", "Steel bolts M8"), issued=date(2026, 10, 1), refs=(), quantity=1):
     return ExtractedDocument(
         doc_type=doc_type, number=number, buyer=buyer, supplier=supplier, issue_date=issued,
         references=list(refs),
-        line_items=[LineItem(description=d, quantity=Decimal(1)) for d in items],
+        line_items=[LineItem(description=d, quantity=Decimal(quantity)) for d in items],
     )
 
 
@@ -113,10 +113,34 @@ def test_quantity_and_price_differences_do_not_block_a_reference_link():
 
 
 def test_several_partial_invoices_can_match_one_order():
-    docs = {"PO-A": doc("purchase_order", "PO-1"),
+    docs = {"PO-A": doc("purchase_order", "PO-1", quantity=2),
             "INV-1": doc("invoice", "INV-1", issued=date(2026, 10, 10)),
             "INV-2": doc("invoice", "INV-2", issued=date(2026, 10, 25))}
     assert _proposed(find_links(docs)) == {("INV-1", "PO-A"), ("INV-2", "PO-A")}
+
+
+def test_second_full_billing_of_an_order_goes_to_review():
+    # Each invoice bills the whole order: the second one is possible duplicate billing, not a partial invoice.
+    docs = {"PO-A": doc("purchase_order", "PO-1"),
+            "INV-1": doc("invoice", "INV-1", issued=date(2026, 10, 10)),
+            "INV-2": doc("invoice", "INV-2", issued=date(2026, 10, 25))}
+    links = {(l.invoice, l.status) for l in find_links(docs)}
+    assert ("INV-1", "proposed") in links and ("INV-2", "ambiguous") in links
+
+
+def test_different_sizes_or_models_are_different_products():
+    a = [LineItem(description=d, quantity=Decimal(1)) for d in ["Anchor bolt M12", "Hydraulic pump HP-300"]]
+    b = [LineItem(description=d, quantity=Decimal(1)) for d in ["Anchor bolt M10", "Hydraulic pump HP-200"]]
+    assert align_items(a, b) == []  # embeddings alone score these pairs above 0.9
+
+
+def test_synonyms_with_the_same_specs_are_paired():
+    a = [LineItem(description="2.5 ton pallet truck", quantity=Decimal(1))]
+    # Known limit: the embedding model scores "Forklift 2.5 ton" at 0.64 against this item, so an order
+    # listing BOTH a forklift and a pallet jack could be mis-paired. Only exact codes rule that out.
+    b = [LineItem(description="Office chair ergonomic", quantity=Decimal(1)),
+         LineItem(description="Pallet jack 2.5t", quantity=Decimal(1))]
+    assert [(i, j) for i, j, _ in align_items(a, b)] == [(0, 1)]
 
 
 def test_reference_link_strength_is_described_not_certain():

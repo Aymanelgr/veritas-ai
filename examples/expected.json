@@ -81,12 +81,7 @@
     "folder": "09_partial_invoice",
     "invoice_file": "invoice_scanned.pdf",
     "linked_po": "PO-2026-1109",
-    "problems": [
-      [
-        "item_not_invoiced",
-        "info"
-      ]
-    ]
+    "problems": []
   },
   {
     "folder": "10_late_delivery",

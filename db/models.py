@@ -253,3 +253,50 @@ class OrganizationSettings(Base):
     email_mode: Mapped[str] = mapped_column(String(10), default="preview")  # off | preview | send
     alert_min_severity: Mapped[str] = mapped_column(String(10), default="critical")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Conversation(Base):
+    """A saved assistant conversation. Private to the user who started it, inside their organization."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    document_ids: Mapped[list] = mapped_column(JSONB, default=list)  # search scope; empty = all documents
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", order_by="ConversationMessage.id")
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[dict] = mapped_column(JSONB)  # the full answer: text, sources, checks, kind
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class EmailIntake(Base):
+    """One email read from the intake mailbox, so the same email is never imported twice."""
+
+    __tablename__ = "email_intake"
+    __table_args__ = (UniqueConstraint("organization_id", "message_id", name="uq_email_once"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    message_id: Mapped[str] = mapped_column(String(500))
+    sender: Mapped[str | None] = mapped_column(String(320))
+    subject: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # [{"filename", "sha256", "status": imported|duplicate|rejected, "document_id", "reason"}]
+    attachments: Mapped[list] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(20))  # imported | no_attachments | rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

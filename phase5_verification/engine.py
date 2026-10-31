@@ -190,12 +190,21 @@ def compare(invoice: DocumentRecord, orders: list[DocumentRecord],
                 evidence=[_ev(po, f"{pj}.description", b.description), _ev(invoice, f"{pi}.description", a.description)]))
             continue
 
-        ok = abs(a.quantity - b.quantity) <= QUANTITY_TOLERANCE
         price = a.unit_price if a.unit_price is not None else b.unit_price
+        # Billing LESS than ordered is a partial invoice, not a discrepancy: the rest may be billed
+        # later, and the cumulative check below catches several invoices billing too much together.
+        # Billing MORE than ordered (or a credit against a positive order) stays a discrepancy.
+        partial = b.quantity > 0 and 0 < a.quantity < b.quantity - QUANTITY_TOLERANCE
+        ok = partial or abs(a.quantity - b.quantity) <= QUANTITY_TOLERANCE
+        if partial:
+            explanation = (f"Partial billing: {a.quantity} of {b.quantity} ordered; "
+                           f"{b.quantity - a.quantity} not billed on this invoice.")
+        else:
+            explanation = f"Both say {b.quantity}." if ok else f"Order says {b.quantity}, invoice says {a.quantity}."
         findings.append(_result(
             ok, unsure, check="quantity_match", subject=name, currency=cur,
-            claim=f"Invoiced quantity of '{name}' matches the order",
-            explanation=f"Both say {b.quantity}." if ok else f"Order says {b.quantity}, invoice says {a.quantity}.",
+            claim=f"Invoiced quantity of '{name}' does not exceed the order",
+            explanation=explanation,
             impact=None if ok or not money_ok or price is None else round_money((a.quantity - b.quantity) * price, cur),
             evidence=[_ev(po, f"{pj}.quantity", b.quantity), _ev(invoice, f"{pi}.quantity", a.quantity)],
         ))
@@ -243,10 +252,12 @@ def compare(invoice: DocumentRecord, orders: list[DocumentRecord],
             ))
     for k, (po, j, item) in enumerate(order_lines):
         if k not in matched_po:
+            # Information, not a problem: with partial invoicing an order line is often billed later.
             findings.append(Finding(
-                check="item_not_invoiced", subject=item.description, claim=f"'{item.description}' was invoiced",
-                verdict="insufficient_evidence", severity="info", kind="not_checked",
-                explanation="Ordered but not on this invoice; it may be invoiced separately.",
+                check="item_not_invoiced", subject=item.description,
+                claim=f"'{item.description}' is not billed on this invoice",
+                verdict="supported", severity="info", kind="ok",
+                explanation=f"Ordered {item.quantity}; not on this invoice. It may be billed on another invoice.",
                 evidence=[_ev(po, f"line_items.{j}.description", item.description)],
             ))
 

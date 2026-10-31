@@ -350,8 +350,8 @@ SCENARIOS = [
         "folder": "09_partial_invoice",
         "title": "Partial invoice",
         "story": "Three items were ordered; this invoice bills only two (the third ships later).",
-        "expect": "INFO only: 'Anchor bolt kit' was ordered but is not on this invoice (it may be invoiced separately).",
-        "linked_po": "PO-2026-1109", "problems": [["item_not_invoiced", "info"]],
+        "expect": "No problems. 'Anchor bolt kit' is listed as not billed on this invoice: information only, since it may be invoiced separately (partial invoicing).",
+        "linked_po": "PO-2026-1109", "problems": [],
         "files": {
             "purchase_order.pdf": lambda items: purchase_order(
                 "PO-2026-1109", "2026-08-05", "Westbridge Construction", "Harbor Steel Fabrication", items,

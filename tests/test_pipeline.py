@@ -81,6 +81,8 @@ def test_duplicate_upload_is_not_processed_again(client):
 def test_partial_invoices_and_cumulative_overbilling(client):
     first = upload(client, "inv-a.txt", invoice_text("INV-A", [("Hydraulic pump HP-200", 6, 100.0)]))
     assert problems(first) == set()  # 6 of 10 pumps: fine
+    partial = next(f for f in first["findings"] if f["check"] == "quantity_match")
+    assert "6 of 10" in partial["explanation"] and "4 not billed" in partial["explanation"]
     second = upload(client, "inv-b.txt", invoice_text("INV-B", [("Hydraulic pump HP-200", 6, 100.0)], date="2026-10-20"))
     over = next(f for f in second["findings"] if f["check"] == "cumulative_quantity")
     assert over["kind"] == "discrepancy" and "earlier invoices billed 6" in over["explanation"]
@@ -99,6 +101,13 @@ def test_reprocessing_is_idempotent_and_keeps_reviews(client):
     kept = next(f for f in after["findings"] if f["check"] == "cumulative_quantity")
     assert kept["id"] == over["id"] and kept["review_status"] == "approved"
     assert after["runs"][0]["stages"][0].get("skipped")  # unchanged file: reading/extraction reused
+
+
+def test_same_number_without_revision_wording_is_not_a_revision(client):
+    a = upload(client, "po-7009-a.txt", po_text("PO-7009", PUMPS, date="2026-10-01"))
+    b = upload(client, "po-7009-b.txt", po_text("PO-7009", [("Hydraulic pump HP-200", 4, 100.0)], date="2026-10-03"))
+    a = client.get(f"/api/documents/{a['id']}").json()
+    assert a["is_current"] and b["is_current"] and b["supersedes_id"] is None
 
 
 def test_revision_supersedes_the_older_order(client):
@@ -138,8 +147,9 @@ def test_unlinked_documents_stay_unlinked_after_reprocessing(client):
 def test_correction_reruns_checks_and_keeps_the_original(client):
     invoice = upload(client, "inv-d.txt", invoice_text("INV-D", [("Steel bolts M8", 500, 0.4)]))
     assert problems(invoice) == set()
+    # Billing more than ordered is a discrepancy (billing less would be a partial invoice).
     response = client.post(f"/api/documents/{invoice['id']}/corrections",
-                           json={"field_path": "line_items.0.quantity", "value": "450", "reason": "delivery note says 450"})
+                           json={"field_path": "line_items.0.quantity", "value": "550", "reason": "delivery note says 550"})
     assert response.status_code == 201 and response.json()["original_value"] == "500"
     invoice = client.get(f"/api/documents/{invoice['id']}").json()
     assert ("quantity_match", "discrepancy") in problems(invoice)

@@ -1,22 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { deleteDocument, fileUrl, getDocument, previewUrl, reprocessDocument } from "../api.js";
+import { deleteDocument, errorMessage, fileUrl, getDocument, previewUrl, reprocessDocument } from "../api.js";
 import Badge from "../components/Badge.jsx";
+import ExtractedData from "../components/ExtractedData.jsx";
 import FindingCard from "../components/FindingCard.jsx";
-import { docTypeLabel, money, number } from "../format.js";
-import { IconAlert, IconCheck, IconChevron, IconLink, IconRefresh, IconTrash } from "../icons.jsx";
+import LinksPanel from "../components/LinksPanel.jsx";
+import { FailureNotice, ProcessingDetails, StageProgress } from "../components/Processing.jsx";
+import Simulator from "../components/Simulator.jsx";
+import Timeline from "../components/Timeline.jsx";
+import { date, docTypeLabel, money, number } from "../format.js";
+import { IconAlert, IconCheck, IconChevron, IconQuestion, IconRefresh, IconTrash } from "../icons.jsx";
 import { useToast } from "../toast.jsx";
 import { can, useUser } from "../user.js";
 import usePolling, { isBusy } from "../usePolling.js";
 
 const IMAGE = /\.(png|jpe?g|tiff?|bmp|webp)$/i;
 const busy = (doc) => isBusy(doc.status);
-const FIELDS = [
-  ["number", "Number"], ["references", "References"], ["issue_date", "Issued"],
-  ["due_date", "Payment due"], ["delivery_date", "Delivery / shipped"], ["buyer", "Buyer"],
-  ["supplier", "Supplier"], ["currency", "Currency"], ["subtotal", "Subtotal", true],
-  ["tax", "Tax", true], ["total", "Total", true], ["payment_terms", "Payment terms"],
-];
 
 // Does this finding talk about this line item? (Claims quote the item description.)
 const mentions = (finding, description) => !!finding && finding.claim.includes(description);
@@ -54,7 +53,7 @@ function Viewer({ doc }) {
               <img className="viewer" src={previewUrl(doc.id, p.number)} alt={`${doc.filename}, page ${p.number}`} />
             </button>
           ))
-        : <pre className="viewer viewer-text">{doc.text}</pre>}
+        : <pre className="viewer viewer-text" dir={doc.language === "ar" ? "rtl" : "auto"}>{doc.text}</pre>}
       {doc.pages?.length > 0 && (
         <div className="viewer-footer">
           {doc.pages.map((p) => `Page ${p.number}: ${p.method === "ocr" ? "read by OCR" : `read as ${p.method}`}` +
@@ -66,31 +65,49 @@ function Viewer({ doc }) {
   );
 }
 
+// "All checks passed" is only said when every check ran; a check that could not run is never a pass.
 function Verdict({ problems, passed }) {
-  const critical = problems.filter((f) => f.severity === "critical" && f.review_status === "pending").length;
-  const open = problems.filter((f) => f.review_status === "pending").length;
+  const open = problems.filter((f) => f.review_status === "pending");
+  const critical = open.filter((f) => f.severity === "critical").length;
+  const unchecked = problems.filter((f) => f.kind === "not_checked" && !["resolved", "rejected"].includes(f.review_status)).length;
+  const extra = unchecked ? ` · ${unchecked} check${unchecked > 1 ? "s" : ""} could not run` : "";
   if (critical)
     return (
       <div className="verdict verdict-critical"><IconAlert size={26} />
         <div>{critical} critical issue{critical > 1 ? "s" : ""} need{critical > 1 ? "" : "s"} review
-          <small>{passed} other checks passed</small></div>
+          <small>{passed} checks passed{extra}</small></div>
       </div>
     );
-  if (open)
+  if (open.length)
     return (
       <div className="verdict verdict-warning"><IconAlert size={26} />
-        <div>{open} point{open > 1 ? "s" : ""} to review<small>{passed} checks passed</small></div>
+        <div>{open.length} point{open.length > 1 ? "s" : ""} to review<small>{passed} checks passed{extra}</small></div>
+      </div>
+    );
+  if (unchecked)
+    return (
+      <div className="verdict verdict-warning"><IconQuestion size={26} />
+        <div>Reviewed, but {unchecked} check{unchecked > 1 ? "s" : ""} could not run
+          <small>{passed} checks passed. Missing information limits what was verified.</small></div>
       </div>
     );
   return (
     <div className="verdict verdict-ok"><IconCheck size={26} />
-      <div>All checks passed or reviewed<small>{passed} checks passed</small></div>
+      <div>All checks ran; each passed or was reviewed<small>{passed} checks passed · reviewing a finding is not payment approval</small></div>
     </div>
   );
 }
 
-function ComparisonTable({ comparison, currency, focus, onFocus }) {
+const ROWS_PER_PAGE = 25;
+
+function ComparisonTable({ comparison, language, focus, onFocus }) {
+  const [page, setPage] = useState(0);
   const changed = (a, b) => a != null && b != null && Number(a) !== Number(b);
+  const currency = comparison.currency;
+  // Prices are only shown side by side as money when both documents use the same, known currency.
+  const price = (v) => (comparison.money_comparable ? money(v, currency, language) : number(v, language));
+  const pages = Math.ceil(comparison.rows.length / ROWS_PER_PAGE);
+  const rows = comparison.rows.slice(page * ROWS_PER_PAGE, (page + 1) * ROWS_PER_PAGE);
   return (
     <section className="panel panel-flush rise" style={{ "--i": 2 }}>
       <div className="panel-header">
@@ -99,85 +116,64 @@ function ComparisonTable({ comparison, currency, focus, onFocus }) {
           {comparison.purchase_order_number ?? "Purchase order"}
         </Link>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Item</th><th className="num">Ordered</th><th className="num">Invoiced</th>
-            <th className="num">Unit price</th><th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {comparison.rows.map((r) => (
-            <tr key={r.description}
-                className={`row-${r.status} ${focus === r.description ? "linked" : ""}`}
-                onMouseEnter={() => onFocus(r.description)} onMouseLeave={() => onFocus(null)}>
-              <td>{r.description}</td>
-              <td className="num">{number(r.ordered_quantity)}</td>
-              <td className={`num ${changed(r.ordered_quantity, r.invoiced_quantity) ? "diff" : ""}`}>
-                {number(r.invoiced_quantity)}
-              </td>
-              <td className={`num ${changed(r.ordered_price, r.invoiced_price) ? "diff" : ""}`}>
-                {money(r.invoiced_price ?? r.ordered_price, currency)}
-                {changed(r.ordered_price, r.invoiced_price) && (
-                  <div className="muted small">ordered at {money(r.ordered_price, currency)}</div>
-                )}
-              </td>
-              <td><Badge value={r.status} /></td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>Total incl. tax</td>
-            <td className="num">{money(comparison.ordered_total, currency)}</td>
-            <td className={`num ${changed(comparison.ordered_total, comparison.invoiced_total) ? "diff" : ""}`}>
-              {money(comparison.invoiced_total, currency)}
-            </td>
-            <td colSpan={2} />
-          </tr>
-        </tfoot>
-      </table>
-    </section>
-  );
-}
-
-function ExtractedData({ extraction }) {
-  const [open, setOpen] = useState(null);
-  const { data, evidence, ungrounded, filled_by_rules: filled, method } = extraction;
-  const show = (value, isMoney) =>
-    Array.isArray(value) ? value.join(", ") : isMoney ? money(value, data.currency ?? "USD") : value;
-  return (
-    <section className="panel panel-flush rise" style={{ "--i": 3 }}>
-      <div className="panel-header">
-        <h2>Extracted data</h2>
-        <span className="muted small">{method === "llm" ? "Local LLM + rules" : "Rules"} · click a value to see where it came from</span>
-      </div>
-      {ungrounded.length > 0 && (
-        <p className="error" style={{ padding: "0 1.1rem" }}>Not found in the document (possible AI error): {ungrounded.join(", ")}</p>
+      {!comparison.money_comparable && (
+        <p className="notice">The currencies differ or are unknown, so prices and totals are not compared. Quantities still are.</p>
       )}
-      <div className="fields">
-        {FIELDS.filter(([key]) => data[key] != null && data[key].length !== 0).map(([key, label, isMoney]) => (
-          <div key={key} className={`field ${open === key ? "open" : ""}`}>
-            <button className="field-row" onClick={() => setOpen(open === key ? null : key)} aria-expanded={open === key}>
-              <span className="field-label">{label}</span>
-              <span className="field-value">
-                {show(data[key], isMoney)}
-                {filled.includes(key) && <span className="source-hint"> · filled by rules</span>}
-              </span>
-              <IconChevron size={14} className="chevron" />
-            </button>
-            <div className="collapse">
-              <div>
-                <div className="field-source">
-                  {evidence[key]
-                    ? <><span>Source line</span><code>{evidence[key]}</code></>
-                    : <span>No single source line (a label or code assigned by the extractor)</span>}
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th><th className="num">Ordered</th><th className="num">Invoiced</th>
+              <th className="num">Unit price</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={`${r.description}-${i}`}
+                  className={`row-${r.status} ${focus === r.description ? "linked" : ""}`}
+                  onMouseEnter={() => onFocus(r.description)} onMouseLeave={() => onFocus(null)}>
+                <td dir="auto">{r.description}</td>
+                <td className="num">{number(r.ordered_quantity, language)}</td>
+                <td className={`num ${changed(r.ordered_quantity, r.invoiced_quantity) ? "diff" : ""}`}>
+                  {number(r.invoiced_quantity, language)}
+                  {changed(r.ordered_quantity, r.invoiced_quantity) && (
+                    <div className="muted small">
+                      {Number(r.invoiced_quantity) > Number(r.ordered_quantity) ? "+" : ""}
+                      {number(Number(r.invoiced_quantity) - Number(r.ordered_quantity), language)}
+                    </div>
+                  )}
+                </td>
+                <td className={`num ${comparison.money_comparable && changed(r.ordered_price, r.invoiced_price) ? "diff" : ""}`}>
+                  {price(r.invoiced_price ?? r.ordered_price)}
+                  {changed(r.ordered_price, r.invoiced_price) && (
+                    <div className="muted small">ordered at {price(r.ordered_price)}</div>
+                  )}
+                </td>
+                <td><Badge value={r.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+          {comparison.money_comparable && (
+            <tfoot>
+              <tr>
+                <td>Total incl. tax</td>
+                <td className="num">{money(comparison.ordered_total, currency, language)}</td>
+                <td className={`num ${changed(comparison.ordered_total, comparison.invoiced_total) ? "diff" : ""}`}>
+                  {money(comparison.invoiced_total, currency, language)}
+                </td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          )}
+        </table>
       </div>
+      {pages > 1 && (
+        <div className="pager">
+          <button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+          <span className="muted small">Page {page + 1} of {pages}</span>
+          <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -195,29 +191,31 @@ export default function DocumentDetail() {
   if (error) return <p className="error">Document not found.</p>;
   if (!doc) return <div className="skeleton" style={{ height: 300 }} />;
 
-  const data = doc.extraction?.data;
+  const data = doc.effective ?? doc.extraction?.data;
+  const lang = doc.language;
   const problems = doc.findings.filter((f) => f.verdict !== "supported");
   const passed = doc.findings.filter((f) => f.verdict === "supported");
-  const currency = data?.currency ?? "USD";
   const rowFor = (finding) => doc.comparison?.rows.find((r) => mentions(finding, r.description))?.description ?? null;
+  const retry = () => reprocessDocument(doc.id).then(() => {
+    toast("Processing started again", { tone: "info" });
+    reload();
+  }, (err) => toast(errorMessage(err), { tone: "critical" }));
 
   return (
     <>
       <header className="page-header">
         <div>
           <div className="doc-title">
-            <h1>{data?.number ?? doc.filename}</h1>
+            <h1 dir="auto">{data?.number ?? doc.filename}</h1>
             <Badge value={doc.doc_type} />
             <Badge value={doc.status} />
+            {doc.revision > 1 && <Badge value="info" label={`Revision ${doc.revision}`} />}
           </div>
           <p>{doc.filename}</p>
         </div>
         <div className="actions">
           {can(user, "reviewer") && (
-            <button className="ghost" onClick={() => reprocessDocument(doc.id).then(() => {
-              toast("Reprocessing started", { tone: "info" });
-              reload();
-            })}><IconRefresh size={16} /> Reprocess</button>
+            <button className="ghost" onClick={retry}><IconRefresh size={16} /> Reprocess</button>
           )}
           {can(user, "admin") && (
             <button className="ghost" onClick={() => {
@@ -225,37 +223,35 @@ export default function DocumentDetail() {
                 deleteDocument(doc.id).then(() => {
                   toast(`${doc.filename} deleted`, { tone: "ok" });
                   navigate("/documents");
-                });
+                }, (err) => toast(errorMessage(err), { tone: "critical" }));
             }}><IconTrash size={16} /> Delete</button>
           )}
         </div>
       </header>
 
-      {doc.error && <p className="error">{doc.error}</p>}
-      {isBusy(doc.status) && (
-        <div className="panel processing">
-          <p>Processing in the background: reading, extracting, matching and verifying…</p>
-          <div className="progress indeterminate"><span /></div>
-        </div>
+      <FailureNotice doc={doc} onRetry={retry} />
+      {doc.duplicate_of_id && (
+        <p className="notice">This file was already uploaded, so it is not processed again. See{" "}
+          <Link to={`/documents/${doc.duplicate_of_id}`}>the original upload</Link>.</p>
       )}
+      {!doc.is_current && !doc.duplicate_of_id && (
+        <p className="notice">A newer revision of this document exists. Checks use the newest revision only.</p>
+      )}
+      {doc.supersedes_id && (
+        <p className="notice">This is revision {doc.revision}. It replaces{" "}
+          <Link to={`/documents/${doc.supersedes_id}`}>the previous version</Link>.</p>
+      )}
+      <StageProgress doc={doc} />
 
       {data && (
         <section className="panel rise" style={{ marginBottom: "1.5rem" }}>
           <div className="summary">
             <div><span>Type</span><strong>{docTypeLabel(data.doc_type)}</strong></div>
-            <div><span>Supplier</span><strong>{data.supplier ?? "—"}</strong></div>
-            <div><span>Buyer</span><strong>{data.buyer ?? "—"}</strong></div>
-            <div><span>Issued</span><strong>{data.issue_date ?? "—"}</strong></div>
-            <div><span>Total</span><strong>{money(data.total, currency)}</strong></div>
+            <div><span>Supplier</span><strong dir="auto">{data.supplier ?? "—"}</strong></div>
+            <div><span>Buyer</span><strong dir="auto">{data.buyer ?? "—"}</strong></div>
+            <div><span>Issued</span><strong>{date(data.issue_date, lang)}</strong></div>
+            <div><span>Total</span><strong>{money(data.total, data.currency, lang)}</strong></div>
           </div>
-          {doc.links.map((l) => (
-            <div key={l.document_id} className="related" style={{ margin: "1rem -1.25rem -1.25rem" }}>
-              <IconLink size={16} />
-              <span>Linked to {docTypeLabel(l.relation).toLowerCase()}{" "}
-                <Link to={`/documents/${l.document_id}`}>{l.number ?? l.filename}</Link></span>
-              <span className="muted small">({l.reasons.join(", ")})</span>
-            </div>
-          ))}
         </section>
       )}
 
@@ -290,10 +286,16 @@ export default function DocumentDetail() {
               </div>
             </section>
           )}
+          {doc.extraction && <LinksPanel doc={doc} onChanged={reload} />}
           {doc.comparison && (
-            <ComparisonTable comparison={doc.comparison} currency={currency} focus={focus} onFocus={setFocus} />
+            <ComparisonTable comparison={doc.comparison} language={lang} focus={focus} onFocus={setFocus} />
           )}
-          {doc.extraction && <ExtractedData extraction={doc.extraction} />}
+          {doc.extraction && <ExtractedData doc={doc} onChanged={reload} />}
+          {doc.doc_type === "invoice" && doc.extraction && doc.is_current && !doc.duplicate_of_id && <Simulator doc={doc} />}
+          <ProcessingDetails key={JSON.stringify(doc.overrides)} doc={doc} onChanged={reload} />
+          {doc.extraction && (
+            <Timeline docId={doc.id} version={`${doc.findings.length}-${doc.corrections.length}-${doc.links.map((l) => l.status).join()}`} />
+          )}
         </div>
         <Viewer doc={doc} />
       </div>

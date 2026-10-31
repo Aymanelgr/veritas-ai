@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from backend import schemas
 from backend.deps import db, require
 from backend.jobs import redis
-from backend.routers import admin, assistant, auth, documents, findings, links, notifications
+from backend.routers import admin, assistant, auth, automation, documents, findings, links, notifications
 from backend.routers.documents import UPLOAD_DIR
 from backend.security import CLIENT_HEADER
 from db.models import Document, Finding, User
@@ -56,7 +56,7 @@ async def require_client_header(request: Request, call_next):
     return await call_next(request)
 
 
-for module in (auth, documents, findings, links, assistant, notifications, admin):
+for module in (auth, documents, findings, links, assistant, notifications, admin, automation):
     app.include_router(module.router)
 
 

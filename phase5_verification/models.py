@@ -16,7 +16,7 @@ Severity = Literal["info", "warning", "critical"]
 #   not_checked             the check could not run (missing data, unknown currency, no order)
 Kind = Literal["ok", "discrepancy", "possible_reading_error", "not_checked"]
 
-RULES_VERSION = "2026.10-2"  # bump when a check's logic changes; stored with every finding
+RULES_VERSION = "2026.10-3"  # bump when a check's logic changes; stored with every finding
 
 
 class DocumentRecord(BaseModel):

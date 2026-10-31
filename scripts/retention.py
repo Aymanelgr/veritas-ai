@@ -19,6 +19,7 @@ from sqlalchemy import exists, select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.audit import record  # noqa: E402
+from backend.routers.assistant import forget_document  # noqa: E402
 from db.models import Document, Finding  # noqa: E402
 from db.session import get_session  # noqa: E402
 
@@ -45,6 +46,7 @@ def main() -> None:
             if args.apply:
                 record(session, None, "document_deleted_by_retention", "document", doc.id,
                        organization_id=doc.organization_id, filename=doc.filename, retention_days=args.days)
+                forget_document(session, doc.organization_id, doc.id)  # also from saved assistant answers
                 Path(doc.file_path).unlink(missing_ok=True)
                 session.delete(doc)
         session.commit()

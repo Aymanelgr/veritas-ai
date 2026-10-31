@@ -5,13 +5,15 @@ import { getHealth, getMe, getStats, logout } from "./api.js";
 import Login from "./pages/Login.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import {
-  IconChat, IconDashboard, IconFile, IconMonitor, IconMoon, IconReview, IconSearch, IconSun, Logo,
+  IconChat, IconDashboard, IconFile, IconInbox, IconMonitor, IconMoon, IconReview, IconSearch, IconSun, Logo,
 } from "./icons.jsx";
 import Ask from "./pages/Ask.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import DocumentDetail from "./pages/DocumentDetail.jsx";
 import Documents from "./pages/Documents.jsx";
 import Reviews from "./pages/Reviews.jsx";
+import Settings from "./pages/Settings.jsx";
+import { can } from "./user.js";
 import { useTheme } from "./theme.js";
 
 const SERVICES = [
@@ -66,6 +68,7 @@ function Shell({ user, onSignOut }) {
     ["/documents", "Documents", IconFile],
     ["/reviews", "Reviews", IconReview, pending],
     ["/ask", "Ask documents", IconChat],
+    ...(can(user, "admin") ? [["/settings", "Settings", IconInbox]] : []),
   ];
 
   // Braces matter: newer browsers make scrollTo() return a Promise, and an effect
@@ -127,6 +130,7 @@ function Shell({ user, onSignOut }) {
             <Route path="/documents/:id" element={<DocumentDetail />} />
             <Route path="/reviews" element={<Reviews />} />
             <Route path="/ask" element={<Ask />} />
+            {can(user, "admin") && <Route path="/settings" element={<Settings />} />}
           </Routes>
         </div>
       </main>

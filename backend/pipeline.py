@@ -34,7 +34,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.corrections import active_corrections, apply_corrections
-from backend.identity import identity_key
+from backend.identity import declares_revision, identity_key
 from backend.jobs import JOB_TIMEOUT, redis
 from db.models import AlertDelivery, Document, Finding, Link, OrganizationSettings, ProcessingRun
 from db.session import get_session
@@ -209,10 +209,13 @@ def _identify(session: Session, doc: Document) -> None:
     family = sorted([doc, *others], key=lambda d: (
         Extraction.model_validate(d.extraction).data.issue_date or date.min if d.extraction else date.min,
         d.created_at or _now(), d.id))
-    for older, newer in zip(family, family[1:]):
-        newer.supersedes_id, newer.revision = older.id, older.revision + 1
     for member in family:
-        member.is_current = member is family[-1]
+        member.supersedes_id, member.revision, member.is_current = None, 1, True
+    # Only a document that states it is a revision replaces the previous one (see backend/identity.py).
+    for older, newer in zip(family, family[1:]):
+        if declares_revision(newer.text or ""):
+            newer.supersedes_id, newer.revision = older.id, older.revision + 1
+            older.is_current = False
 
 
 def _data(doc: Document) -> ExtractedDocument:

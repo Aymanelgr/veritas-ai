@@ -62,7 +62,7 @@ class LinkCreateIn(BaseModel):
 
 class CorrectionIn(BaseModel):
     field_path: str  # e.g. "total", "currency", "line_items.3.quantity"
-    value: str | int | float | None
+    value: str | int | float | list[str] | None  # a list for "references"
     reason: str
 
 
@@ -141,6 +141,8 @@ class DocumentDetail(DocumentOut):
     text: str | None
     pages: list | None
     extraction: dict | None
+    # The extracted data with reviewers' corrections applied: what verification actually uses.
+    effective: dict | None = None
     links: list[LinkOut]
     findings: list[FindingOut]
     comparison: Comparison | None = None
@@ -161,7 +163,68 @@ class AttachmentIn(BaseModel):
 
 class AskIn(BaseModel):
     question: str
-    document_ids: list[int] | None = None
+    document_ids: list[int] | None = None  # limit the search to these documents
+    conversation_id: int | None = None  # continue a saved conversation (None starts a new one)
+
+
+class ConversationOut(ORM):
+    id: int
+    title: str
+    document_ids: list[int] = []
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class ConversationTurn(BaseModel):
+    question: str
+    answer: dict
+    created_at: datetime
+
+
+class ConversationDetail(ConversationOut):
+    messages: list[ConversationTurn] = []
+
+
+class SimulationChange(BaseModel):
+    document_id: int
+    field_path: str
+    value: str | int | float | None
+
+
+class SimulateIn(BaseModel):
+    changes: list[SimulationChange]
+
+
+class AlertSettings(BaseModel):
+    recipients: list[str]
+    email_mode: Literal["off", "preview", "send"]
+    min_severity: Literal["critical", "warning"]
+    webhook_configured: bool = False
+
+
+class AlertSettingsIn(BaseModel):
+    recipients: list[str] = []
+    email_mode: Literal["off", "preview", "send"] = "preview"
+    min_severity: Literal["critical", "warning"] = "critical"
+
+
+class DeliveryOut(ORM):
+    id: int
+    kind: str
+    status: str
+    attempts: int
+    recipients: list = []
+    summary: str | None = None
+    last_error: str | None = None
+    document_id: int | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class DeliveryReportIn(BaseModel):
+    delivery_ids: list[int]
+    status: Literal["sent", "preview", "failed", "skipped"]
+    error: str | None = None
 
 
 class LoginIn(BaseModel):

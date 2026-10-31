@@ -32,13 +32,13 @@ approval text. The reviewer can inspect the evidence and confirm or dismiss the 
 |---|---|
 | Document reading | Text and scanned PDFs, Word, text, and images; OCR through PaddleOCR |
 | Extraction | Local Ollama LLM, Pydantic validation, regex and spaCy rules, source grounding |
-| Matching | References, party identities, embedded line items, ambiguity handling, audited link corrections |
+| Matching | References validated against parties and dates, product codes and specs before embeddings, ambiguity handling, partial and cumulative invoicing, audited link corrections |
 | Verification | Arithmetic and cross-document rules, NLI claim checking, evidence-backed findings |
-| RAG | Document retrieval with pgvector, cited answers, and citation checking |
-| Review | Findings, document comparisons, reviewer decisions, and audit events |
+| Assistant | Saved conversations with follow-ups and document scope; exact database answers for counts and statuses; cited document answers with citation checking |
+| Review | Problems first, evidence, corrections with reasons, match confirmation, explanations, supplier message drafts, what-if simulation, transaction timeline, versioned decision history |
 | Access control | Cookie sessions, viewer/reviewer/admin roles, organization scoping |
 | Processing | Redis/RQ workers, persisted processing state, Alembic migrations |
-| Automation | n8n templates for review notifications and reminders |
+| Automation | n8n alerts and daily reminders (off / preview / send), delivery status, optional email intake |
 | Languages | English, French, and Arabic parsing and evaluation work; coverage varies by component |
 
 ## Architecture
@@ -105,8 +105,10 @@ Ollama runs on the host; the containers reach it at `host.docker.internal`. On L
 configure this host mapping if your Docker setup does not provide it.
 
 For notification setup, set `VERITAS_API_FROM_N8N=http://api:8000` in `.env` and run
-`python scripts/setup_n8n.py` from a configured local Python environment. The workflow
-instructions and templates are in `automation/n8n/`. Notifications are optional.
+`python scripts/setup_n8n.py` from a configured local Python environment. Alerts default to
+preview mode: nothing is emailed until an administrator chooses "Send" in Settings and SMTP
+is configured in n8n. See [automation/n8n/README.md](automation/n8n/README.md), which also
+covers the optional email intake. Notifications are optional.
 
 This setup binds exposed ports to localhost. A public hosted deployment needs a separate
 HTTPS and operations configuration; uploading the code to GitHub does not host the application.

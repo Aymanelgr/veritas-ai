@@ -31,6 +31,10 @@ from phase3_extraction.schemas import ExtractedDocument, LineItem
 # python scripts/reindex.py to rebuild the search passages.
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 ITEM_MATCH_THRESHOLD = 0.6  # cosine similarity above which two item descriptions are "the same"
+# Synonyms the embedding model scores low ("pallet truck" / "pallet jack": 0.40) are still paired when
+# both items are left over, state the same size/model numbers and share a word. Measured on the
+# synthetic set: this recovers the only missed pair without pairing any different product.
+RESIDUAL_MATCH_THRESHOLD = 0.35
 LINK_THRESHOLD = 0.8  # fuzzy score needed to link an invoice to a PO
 MAX_INVOICE_DELAY = timedelta(days=120)
 LEGAL_SUFFIXES = {"sarl", "ltd", "inc", "gmbh", "co", "llc", "sa", "plc", "corp"}
@@ -82,6 +86,37 @@ def _code(item: LineItem) -> str | None:
     return re.sub(r"[\s\-_/.]", "", item.code).upper() if item.code else None
 
 
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_WORD = re.compile(r"[^\W\d_]{3,}")
+
+
+def spec_numbers(description: str) -> frozenset[str]:
+    """Sizes, ratings and model numbers in a description: "Anchor bolt M12" -> {"12"}, "2,5 t" -> {"2.5"}."""
+    return frozenset(n.replace(",", ".").lstrip("0") or "0" for n in _NUMBER.findall(description))
+
+
+def specs_conflict(a: str, b: str) -> bool:
+    """Different stated specs mean different products, however similar the wording.
+
+    Embeddings score "Anchor bolt M12" vs "Anchor bolt M10" at 0.94 and "pump HP-200" vs
+    "pump HP-300" at 0.93, so without this an invoiced substitute would be compared as if it
+    were the ordered item. A description stating fewer numbers ("Gloves" vs "Gloves, box of 100")
+    is not a conflict.
+    """
+    x, y = spec_numbers(a), spec_numbers(b)
+    return bool(x and y) and not (x <= y or y <= x)
+
+
+# Units and packaging say nothing about WHICH product it is ("2.5 ton forklift" vs "2.5 ton pallet truck").
+_UNIT_WORDS = {"ton", "tonne", "kg", "gram", "mm", "cm", "meter", "metre", "liter", "litre", "volt", "watt", "amp",
+               "pc", "pce", "piece", "unit", "box", "pack", "set", "roll", "pair", "bag", "carton", "lot", "with",
+               "for", "and", "the", "pièce", "boîte", "lot", "avec", "pour"}
+
+
+def _words(description: str) -> set[str]:
+    return {w.rstrip("s") for w in _WORD.findall(description.lower())} - _UNIT_WORDS
+
+
 def align_items(a: list[LineItem], b: list[LineItem]) -> list[tuple[int, int, float]]:
     """Pair items of `a` with items of `b`: [(index_in_a, index_in_b, similarity)].
 
@@ -113,6 +148,8 @@ def align_items(a: list[LineItem], b: list[LineItem]) -> list[tuple[int, int, fl
         for y, j in enumerate(rest_b):
             if _code(a[i]) and _code(b[j]) and _code(a[i]) != _code(b[j]):
                 sims[x, y] = -1  # both coded, different codes: different products
+            elif specs_conflict(a[i].description, b[j].description):
+                sims[x, y] = -1  # e.g. M12 vs M10: different products
     # Greedy: take the most similar remaining pair until similarity drops too low.
     for flat in np.argsort(-sims, axis=None):
         x, y = divmod(int(flat), sims.shape[1])
@@ -120,6 +157,21 @@ def align_items(a: list[LineItem], b: list[LineItem]) -> list[tuple[int, int, fl
             break
         i, j = rest_a[x], rest_b[y]
         if i not in used_a and j not in used_b:
+            pairs.append((i, j, float(sims[x, y])))
+            used_a.add(i)
+            used_b.add(j)
+
+    # Second pass for leftovers only: weaker wording similarity, but the same non-empty specs
+    # and a shared word ("2.5 ton pallet truck" / "Pallet jack 2.5t").
+    for flat in np.argsort(-sims, axis=None):
+        x, y = divmod(int(flat), sims.shape[1])
+        if sims[x, y] < RESIDUAL_MATCH_THRESHOLD:
+            break
+        i, j = rest_a[x], rest_b[y]
+        if i in used_a or j in used_b:
+            continue
+        da, db = a[i].description, b[j].description
+        if spec_numbers(da) and spec_numbers(da) == spec_numbers(db) and _words(da) & _words(db):
             pairs.append((i, j, float(sims[x, y])))
             used_a.add(i)
             used_b.add(j)

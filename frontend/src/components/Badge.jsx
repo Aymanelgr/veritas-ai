@@ -4,6 +4,8 @@ const LABELS = {
   not_invoiced: "Not invoiced",
   approved: "Confirmed",
   rejected: "Dismissed",
+  resolved: "Resolved",
+  superseded: "Superseded",
 };
 
 // A small coloured pill; the colour comes from the value (e.g. "critical", "processed").
